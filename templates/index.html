@@ -95,6 +95,152 @@
             margin-bottom: 25px;
         }
         
+        /* 下载器选择样式 */
+        .downloader-selector {
+            background: linear-gradient(135deg, #e8f5e8 0%, #f0f8ff 100%);
+            padding: 20px;
+            border-radius: 15px;
+            border: 2px solid #c3e6cb;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        
+        .downloader-selector:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+        }
+        
+        .downloader-title {
+            font-weight: bold;
+            color: #155724;
+            margin-bottom: 15px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .downloader-options {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .downloader-item {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            padding: 15px 20px;
+            background: white;
+            border: 2px solid #28a745;
+            border-radius: 12px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            min-width: 180px;
+            position: relative;
+            overflow: hidden;
+            flex: 1;
+        }
+        
+        .downloader-item::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(40, 167, 69, 0.2), transparent);
+            transition: left 0.5s ease;
+        }
+        
+        .downloader-item:hover::before {
+            left: 100%;
+        }
+        
+        .downloader-item:hover {
+            border-color: #20c997;
+            background: #f8fff9;
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 8px 20px rgba(40, 167, 69, 0.3);
+        }
+        
+        .downloader-item input[type="radio"] {
+            display: none;
+        }
+        
+        .downloader-custom {
+            width: 22px;
+            height: 22px;
+            border: 3px solid #28a745;
+            border-radius: 50%;
+            margin-right: 12px;
+            position: relative;
+            background: white;
+            transition: all 0.3s ease;
+        }
+        
+        .downloader-item input[type="radio"]:checked + .downloader-custom {
+            border-color: #20c997;
+            background: #20c997;
+            animation: downloaderPulse 0.4s ease;
+        }
+        
+        @keyframes downloaderPulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
+        
+        .downloader-item input[type="radio"]:checked + .downloader-custom::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            background: white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            animation: downloaderAppear 0.2s ease;
+        }
+        
+        @keyframes downloaderAppear {
+            0% { opacity: 0; transform: translate(-50%, -50%) scale(0); }
+            100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        }
+        
+        .downloader-content {
+            flex: 1;
+        }
+        
+        .downloader-name {
+            font-weight: bold;
+            color: #155724;
+            font-size: 15px;
+            margin-bottom: 4px;
+            transition: all 0.3s ease;
+        }
+        
+        .downloader-desc {
+            font-size: 12px;
+            color: #6c757d;
+            line-height: 1.4;
+        }
+        
+        .downloader-item input[type="radio"]:checked ~ .downloader-content .downloader-name {
+            color: #20c997;
+        }
+        
+        .downloader-status {
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(32, 201, 151, 0.1);
+            border-radius: 6px;
+            border-left: 3px solid #20c997;
+            font-size: 12px;
+            color: #155724;
+        }
+        
         /* 下载选项样式 */
         .download-options {
             background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
@@ -1074,6 +1220,17 @@
             .filter-select {
                 width: 100%;
             }
+
+            /* 移动端下载器选择 */
+            .downloader-options {
+                flex-direction: column;
+                gap: 12px;
+            }
+
+            .downloader-item {
+                min-width: auto;
+                flex: none;
+            }
         }
 
         /* 性能状态弹窗 */
@@ -1196,7 +1353,7 @@
     <div class="container">
         <div class="header">
             <h1>🎬 视频音频下载器</h1>
-            <p>🚀 性能优化版 (错误修复) • 原始格式下载 • 8线程并发 • 智能重试 • 极速无损</p>
+            <p>🚀 性能优化版 (可选下载器) • 原始格式下载 • 8线程并发 • 智能重试 • 极速无损</p>
         </div>
         
         <div class="content">
@@ -1204,6 +1361,34 @@
                 <div class="input-group">
                     <input type="text" id="urlInput" class="url-input" placeholder="请输入视频URL..." />
                     <button id="downloadBtn" class="download-btn">🎯 下载原始音频</button>
+                </div>
+                
+                <!-- 下载器选择区域 -->
+                <div class="downloader-selector">
+                    <div class="downloader-title">
+                        🔧 选择下载器
+                    </div>
+                    <div class="downloader-options">
+                        <label class="downloader-item">
+                            <input type="radio" name="downloaderType" value="ytdlp" checked>
+                            <span class="downloader-custom"></span>
+                            <div class="downloader-content">
+                                <div class="downloader-name">🚀 yt-dlp 内置优化版</div>
+                                <div class="downloader-desc">高度优化的内置下载器，确保进度显示正常，适合大多数场景</div>
+                            </div>
+                        </label>
+                        <label class="downloader-item">
+                            <input type="radio" name="downloaderType" value="aria2c">
+                            <span class="downloader-custom"></span>
+                            <div class="downloader-content">
+                                <div class="downloader-name">⚡ aria2c 外部加速器</div>
+                                <div class="downloader-desc">极速多线程下载器，速度更快但进度显示可能不稳定</div>
+                            </div>
+                        </label>
+                    </div>
+                    <div id="downloaderStatus" class="downloader-status">
+                        正在检测下载器状态...
+                    </div>
                 </div>
                 
                 <!-- 下载选项区域 -->
@@ -1412,6 +1597,7 @@
                 this.bindEvents();
                 this.loadDownloadsList();
                 this.initializeState();
+                this.checkDownloaderStatus(); // 检查下载器状态
                 
                 console.log('VideoDownloader initialized with session:', this.sessionId);
             }
@@ -1423,6 +1609,7 @@
                 this.handleDownloadTypeChange('audio'); // 默认为音频
                 this.handleAudioFormatChange('original'); // 默认为原始格式
                 this.handleVideoFormatChange('original'); // 默认为原始格式
+                this.handleDownloaderChange('ytdlp'); // 默认为yt-dlp
             }
             
             initElements() {
@@ -1441,6 +1628,10 @@
                 this.refreshBtn = document.getElementById('refreshBtn');
                 this.performanceBtn = document.getElementById('performanceBtn');
                 this.testAria2cBtn = document.getElementById('testAria2cBtn');
+                
+                // 下载器选择元素
+                this.downloaderTypeRadios = document.querySelectorAll('input[name="downloaderType"]');
+                this.downloaderStatus = document.getElementById('downloaderStatus');
                 
                 // 选项元素
                 this.downloadTypeRadios = document.querySelectorAll('input[name="downloadType"]');
@@ -1494,6 +1685,13 @@
                     this.downloadBtn.disabled = !this.urlInput.value.trim() || this.isDownloading;
                 });
                 
+                // 下载器类型切换事件
+                this.downloaderTypeRadios.forEach(radio => {
+                    radio.addEventListener('change', (e) => {
+                        this.handleDownloaderChange(e.target.value);
+                    });
+                });
+                
                 // 下载类型切换事件
                 this.downloadTypeRadios.forEach(radio => {
                     radio.addEventListener('change', (e) => {
@@ -1515,6 +1713,61 @@
                 this.fileTypeFilter.addEventListener('change', () => {
                     this.filterAndDisplayFiles();
                 });
+            }
+            
+            handleDownloaderChange(type) {
+                const statusMessages = {
+                    'ytdlp': '✅ yt-dlp内置优化版已选择 - 高度优化，确保进度显示正常',
+                    'aria2c': '⚡ aria2c外部加速器已选择 - 极速下载，进度显示可能不稳定'
+                };
+                
+                this.downloaderStatus.textContent = statusMessages[type] || '正在检测下载器状态...';
+                
+                // 如果选择aria2c，可以进行快速检测
+                if (type === 'aria2c') {
+                    this.quickCheckAria2c();
+                }
+            }
+            
+            async quickCheckAria2c() {
+                try {
+                    const response = await fetch('/api/test-aria2c');
+                    const data = await response.json();
+                    
+                    if (data.status === 'not_found') {
+                        this.downloaderStatus.textContent = '⚠️ aria2c未安装，将自动回退到yt-dlp内置下载器';
+                        this.downloaderStatus.style.color = '#fd7e14';
+                    } else if (data.status === 'available_but_not_used' || data.status === 'working') {
+                        this.downloaderStatus.textContent = '✅ aria2c可用 - 极速多线程下载模式';
+                        this.downloaderStatus.style.color = '#28a745';
+                    } else {
+                        this.downloaderStatus.textContent = '⚠️ aria2c检测异常，建议使用yt-dlp内置下载器';
+                        this.downloaderStatus.style.color = '#fd7e14';
+                    }
+                } catch (error) {
+                    this.downloaderStatus.textContent = '⚠️ 下载器检测失败，使用默认设置';
+                    this.downloaderStatus.style.color = '#fd7e14';
+                }
+            }
+            
+            async checkDownloaderStatus() {
+                try {
+                    const response = await fetch('/api/test-aria2c');
+                    const data = await response.json();
+                    
+                    let statusText = '';
+                    if (data.status === 'not_found') {
+                        statusText = '❌ aria2c未安装，仅可使用yt-dlp内置下载器';
+                    } else if (data.status === 'available_but_not_used' || data.status === 'working') {
+                        statusText = '✅ 两种下载器均可用，请选择您偏好的下载器';
+                    } else {
+                        statusText = '⚠️ aria2c状态异常，建议使用yt-dlp内置下载器';
+                    }
+                    
+                    this.downloaderStatus.textContent = statusText;
+                } catch (error) {
+                    this.downloaderStatus.textContent = '⚠️ 下载器状态检测失败';
+                }
             }
             
             handleDownloadTypeChange(type) {
@@ -1576,11 +1829,13 @@
             
             getDownloadOptions() {
                 const downloadType = document.querySelector('input[name="downloadType"]:checked').value;
+                const downloaderType = document.querySelector('input[name="downloaderType"]:checked').value;
                 
                 const options = {
                     type: downloadType,
                     url: this.urlInput.value.trim(),
-                    session_id: this.sessionId
+                    session_id: this.sessionId,
+                    downloader: downloaderType  // 新增下载器选择
                 };
                 
                 if (downloadType === 'video') {
@@ -1743,7 +1998,7 @@
                 if (!this.validateUrl(url)) return;
                 
                 const downloadOptions = this.getDownloadOptions();
-                this.setDownloadingState(downloadOptions.type);
+                this.setDownloadingState(downloadOptions.type, downloadOptions.downloader);
                 
                 try {
                     await this.sendDownloadRequest(downloadOptions);
@@ -1770,12 +2025,13 @@
                 return true;
             }
             
-            setDownloadingState(type) {
+            setDownloadingState(type, downloader) {
                 this.isDownloading = true;
                 this.downloadBtn.disabled = true;
                 
                 const icon = type === 'video' ? '🎥' : '🎯';
-                const text = type === 'video' ? '下载视频中...' : '下载原始音频中...';
+                const downloaderText = downloader === 'aria2c' ? '(aria2c加速)' : '(yt-dlp优化)';
+                const text = type === 'video' ? `下载视频中...${downloaderText}` : `下载原始音频中...${downloaderText}`;
                 this.downloadBtn.textContent = `${icon} ${text}`;
                 this.downloadBtn.style.background = '#ccc';
                 this.downloadBtn.style.cursor = 'not-allowed';
@@ -2016,28 +2272,32 @@
                     switch (data.status) {
                         case 'working':
                             message = `✅ ${data.message}`;
-                            alertClass = 'alert-success';
+                            alertClass = 'success';
+                            break;
+                        case 'available_but_not_used':
+                            message = `✅ ${data.message}`;
+                            alertClass = 'success';
                             break;
                         case 'not_found':
                             message = `❌ ${data.message}`;
-                            alertClass = 'alert-warning';
+                            alertClass = 'error';
                             break;
                         case 'error':
                         case 'timeout':
                         case 'exception':
                             message = `⚠️ ${data.message}`;
-                            alertClass = 'alert-error';
+                            alertClass = 'error';
                             break;
                         default:
                             message = '❓ 未知状态';
-                            alertClass = 'alert-info';
+                            alertClass = 'error';
                     }
                     
                     this.showMessage(message, alertClass);
                     
                 } catch (error) {
                     console.error('测试aria2c失败:', error);
-                    this.showMessage('❌ 测试aria2c时发生错误', 'alert-error');
+                    this.showMessage('❌ 测试aria2c时发生错误', 'error');
                 } finally {
                     this.testAria2cBtn.disabled = false;
                     this.testAria2cBtn.textContent = '🔧 测试aria2c';
@@ -2073,33 +2333,3 @@
                 
                 // 更新优化特性列表
                 const featuresContainer = document.getElementById('optimizationFeatures');
-                if (data.optimization_features) {
-                    featuresContainer.innerHTML = data.optimization_features
-                        .map(feature => `<div class="feature-item">${feature}</div>`)
-                        .join('');
-                }
-            }
-        }
-        
-        // 初始化应用
-        document.addEventListener('DOMContentLoaded', () => {
-            console.log('DOM loaded, initializing VideoDownloader...');
-            new VideoDownloader();
-        });
-        
-        // 全局函数：关闭性能模态框
-        function hidePerformanceModal() {
-            const modal = document.getElementById('performanceModal');
-            modal.classList.remove('show');
-        }
-        
-        // 点击模态框外部关闭
-        document.addEventListener('click', (e) => {
-            const modal = document.getElementById('performanceModal');
-            if (e.target === modal) {
-                hidePerformanceModal();
-            }
-        });
-    </script>
-</body>
-</html>

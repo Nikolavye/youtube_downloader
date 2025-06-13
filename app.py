@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-app_ultimate.py – Flask-SocketIO 后端 (终极优化版)
+app_ultimate.py – Flask-SocketIO 后端 (终极优化版 + 下载器选择)
 
 结合两个版本的优势：
 • 线程池复用 + 高度优化的yt-dlp内置下载器
+• 可选择aria2c外部加速器
 • 原始格式支持 + 格式转换选择  
 • 性能监控 + 智能重试策略
 • 进度节流 + User-Agent 轮换
@@ -52,7 +53,7 @@ DownloadStatus: dict[str, dict] = {}
 
 # ────────────── 性能配置 ──────────────
 PERFORMANCE_CONFIG = {
-    # 检测是否安装 aria2c (但不使用，以确保进度显示正常)
+    # 检测是否安装 aria2c
     "has_aria2c": shutil.which("aria2c") is not None,
     
     # 高性能yt-dlp配置
@@ -70,6 +71,11 @@ PERFORMANCE_CONFIG = {
     # 网络优化
     "socket_timeout": 60,
     "sleep_interval_requests": 0.2,  # 减少请求间隔
+    
+    # aria2c 配置
+    "aria2c_max_connection_per_server": 16,
+    "aria2c_split": 16,
+    "aria2c_min_split_size": "1M",
     
     # User-Agent 池
     "user_agents": [
@@ -116,10 +122,36 @@ def get_optimal_user_agent():
     return random.choice(PERFORMANCE_CONFIG["user_agents"])
 
 
+def check_aria2c_availability():
+    """检查aria2c是否可用"""
+    if not PERFORMANCE_CONFIG["has_aria2c"]:
+        return False, "aria2c 未安装或不在 PATH 中"
+    
+    try:
+        result = subprocess.run(
+            ["aria2c", "--version"], 
+            capture_output=True, 
+            text=True, 
+            timeout=5
+        )
+        
+        if result.returncode == 0:
+            version_line = result.stdout.split('\n')[0]
+            return True, f"aria2c 可用: {version_line}"
+        else:
+            return False, f"aria2c 执行错误: {result.stderr}"
+            
+    except subprocess.TimeoutExpired:
+        return False, "aria2c 响应超时"
+    except Exception as e:
+        return False, f"测试aria2c时出错: {e}"
+
+
 # ────────────── 下载进度回调 (带节流) ──────────────
 class DownloadProgress:
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, downloader_type: str = "ytdlp"):
         self.session_id = session_id
+        self.downloader_type = downloader_type
         self._last_emit = 0.0
         self._throttle_interval = PERFORMANCE_CONFIG["progress_throttle"]
 
@@ -131,6 +163,7 @@ class DownloadProgress:
             return
         
         self._last_emit = now
+        payload["downloader"] = self.downloader_type
         DownloadStatus[self.session_id] = payload
         socketio.emit("download_progress", payload, room=self.session_id)
 
@@ -176,6 +209,8 @@ class DownloadProgress:
                 is_original = is_original_format_file(fname)
                 format_type = "原始格式" if is_original else "转换后"
                 
+                downloader_text = "aria2c加速" if self.downloader_type == "aria2c" else "yt-dlp优化"
+                
                 payload = {
                     "status": "finished",
                     "percentage": 100,
@@ -183,7 +218,7 @@ class DownloadProgress:
                     "filepath": d.get("filename"),
                     "download_type": dtype,
                     "is_original": is_original,
-                    "message": f"{icon} {format_type}{get_type_text(dtype)}下载完成: {fname}",
+                    "message": f"{icon} {format_type}{get_type_text(dtype)}下载完成: {fname} ({downloader_text})",
                 }
                 self._emit(payload)
 
@@ -200,9 +235,11 @@ def build_audio_format_string(fmt: str, quality: str | int):
 
 
 def generate_ydl_options(opts: dict, prog: DownloadProgress):
-    """生成高度优化的 yt-dlp 配置（使用内置下载器确保进度显示）"""
+    """生成yt-dlp配置，根据下载器类型选择不同的策略"""
     
-            # 基础配置
+    downloader_type = opts.get("downloader", "ytdlp")
+    
+    # 基础配置
     base = {
         "progress_hooks": [prog.progress_hook],
         "no_warnings": False,  # 启用警告以便调试
@@ -222,15 +259,9 @@ def generate_ydl_options(opts: dict, prog: DownloadProgress):
         "http_chunk_size": PERFORMANCE_CONFIG["http_chunk_size"],
         "sleep_interval_requests": PERFORMANCE_CONFIG["sleep_interval_requests"],
         
-        # 片段并发 - 关键优化点
-        "concurrent_fragments": PERFORMANCE_CONFIG["concurrent_fragments"],
-        
         # 其他优化
         "keep_fragments": False,
         "prefer_free_formats": True,
-        
-        # 强制使用内置下载器（确保进度回调正常工作）
-        "external_downloader": None,
         
         # YouTube专用优化
         "extractor_args": {
@@ -245,6 +276,36 @@ def generate_ydl_options(opts: dict, prog: DownloadProgress):
         "force_ipv4": False,
         "sleep_interval": 0,
     }
+
+    # 根据下载器类型配置
+    if downloader_type == "aria2c" and PERFORMANCE_CONFIG["has_aria2c"]:
+        # 使用aria2c外部下载器
+        base.update({
+            "external_downloader": "aria2c",
+            "external_downloader_args": {
+                "aria2c": [
+                    "--max-connection-per-server", str(PERFORMANCE_CONFIG["aria2c_max_connection_per_server"]),
+                    "--split", str(PERFORMANCE_CONFIG["aria2c_split"]),
+                    "--min-split-size", PERFORMANCE_CONFIG["aria2c_min_split_size"],
+                    "--max-tries", str(PERFORMANCE_CONFIG["retries"]),
+                    "--retry-wait", "1",
+                    "--timeout", "60",
+                    "--connect-timeout", "30",
+                    "--summary-interval", "0",  # 禁用aria2c自己的进度输出
+                    "--console-log-level", "warn",  # 减少日志输出
+                    "--download-result", "hide",  # 隐藏下载结果
+                    "--user-agent", get_optimal_user_agent(),
+                ]
+            },
+            # aria2c模式下减少并发片段，让aria2c自己处理
+            "concurrent_fragments": 1,
+        })
+    else:
+        # 使用yt-dlp内置下载器（确保进度显示正常）
+        base.update({
+            "external_downloader": None,
+            "concurrent_fragments": PERFORMANCE_CONFIG["concurrent_fragments"],
+        })
 
     dtype = opts["type"]
 
@@ -320,6 +381,7 @@ def download_media(opts: dict, session_id: str):
     """在线程池中执行的下载任务"""
     url = opts["url"]
     dtype = opts["type"]
+    downloader_type = opts.get("downloader", "ytdlp")
     
     is_original = False
     if dtype == "audio":
@@ -329,7 +391,7 @@ def download_media(opts: dict, session_id: str):
         video_format = opts.get("video_format", "original")
         is_original = (video_format == "original")
     
-    progress = DownloadProgress(session_id)
+    progress = DownloadProgress(session_id, downloader_type)
     ydl_opts = generate_ydl_options(opts, progress)
 
     try:
@@ -358,6 +420,8 @@ def download_media(opts: dict, session_id: str):
             
             print(f"视频信息提取完成: {title}, 时长: {duration}s, 预估大小: {format_bytes(filesize) if filesize else '未知'}")
             
+            downloader_name = "aria2c加速器" if downloader_type == "aria2c" else "yt-dlp优化版"
+            
             progress._emit({
                 "status": "starting",
                 "title": title,
@@ -365,12 +429,12 @@ def download_media(opts: dict, session_id: str):
                 "is_original": is_original,
                 "duration": duration,
                 "estimated_size": filesize,
-                "downloader": "yt-dlp优化版",
-                "message": f"🚀 使用yt-dlp优化版下载器 | {format_type}{type_text}: {title}",
+                "downloader": downloader_name,
+                "message": f"🚀 使用{downloader_name} | {format_type}{type_text}: {title}",
             })
 
             # 执行下载
-            print(f"开始下载: {title}")
+            print(f"开始下载: {title} (使用 {downloader_name})")
             ydl.download([url])
             print(f"下载完成: {title}")
 
@@ -391,12 +455,15 @@ def api_download():
     url = data.get("url", "").strip()
     dtype = data.get("type", "video")
     session_id = data.get("session_id")
+    downloader = data.get("downloader", "ytdlp")
 
     # 参数验证
     if not url:
         return jsonify({"error": "缺少 URL"}), 400
     if dtype not in {"video", "audio"}:
         return jsonify({"error": f"不支持的下载类型: {dtype}"}), 400
+    if downloader not in {"ytdlp", "aria2c"}:
+        return jsonify({"error": f"不支持的下载器类型: {downloader}"}), 400
     try:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
@@ -405,6 +472,15 @@ def api_download():
         return jsonify({"error": "无效的 URL"}), 400
     if not session_id:
         return jsonify({"error": "缺少 session_id"}), 400
+
+    # 检查aria2c可用性
+    if downloader == "aria2c":
+        is_available, message = check_aria2c_availability()
+        if not is_available:
+            # 自动回退到yt-dlp
+            data["downloader"] = "ytdlp"
+            downloader = "ytdlp"
+            print(f"aria2c不可用，自动回退到yt-dlp: {message}")
 
     # 提交到线程池
     EXECUTOR.submit(download_media, data, session_id)
@@ -422,14 +498,16 @@ def api_download():
         is_original = (video_format == "original")
         format_info = "原始格式" if is_original else f"{video_format.upper()}格式"
     
+    downloader_name = "aria2c加速器" if downloader == "aria2c" else "yt-dlp优化版"
+    
     return jsonify({
         "message": "任务已提交",
         "session_id": session_id,
         "type": dtype,
         "format": format_info,
         "is_original": is_original,
-        "downloader": "yt-dlp优化版",
-        "performance_mode": "高性能模式（确保进度显示）",
+        "downloader": downloader_name,
+        "performance_mode": f"高性能模式 ({downloader_name})",
     })
 
 
@@ -488,47 +566,29 @@ def api_download_file(filename: str):
 
 @app.route("/api/test-aria2c")
 def test_aria2c():
-    """测试aria2c是否真正可用"""
-    # 检测aria2c是否在PATH中
-    has_aria2c = shutil.which("aria2c") is not None
+    """测试aria2c是否可用"""
+    is_available, message = check_aria2c_availability()
     
-    if not has_aria2c:
+    if not PERFORMANCE_CONFIG["has_aria2c"]:
         return jsonify({
             "status": "not_found",
-            "message": "aria2c 未安装或不在 PATH 中（当前使用yt-dlp优化版确保进度显示正常）"
+            "message": message
         })
     
-    try:
-        # 尝试运行aria2c获取版本
-        result = subprocess.run(
-            ["aria2c", "--version"], 
-            capture_output=True, 
-            text=True, 
-            timeout=5
-        )
-        
-        if result.returncode == 0:
-            version_line = result.stdout.split('\n')[0]
-            return jsonify({
-                "status": "available_but_not_used",
-                "message": f"aria2c 可用但未使用: {version_line}（当前使用yt-dlp优化版确保进度显示正常）",
-                "full_output": result.stdout
-            })
-        else:
-            return jsonify({
-                "status": "error", 
-                "message": f"aria2c 执行错误: {result.stderr}"
-            })
-            
-    except subprocess.TimeoutExpired:
+    if is_available:
         return jsonify({
-            "status": "timeout",
-            "message": "aria2c 响应超时"
+            "status": "available_but_not_used",
+            "message": message,
+            "aria2c_config": {
+                "max_connection_per_server": PERFORMANCE_CONFIG["aria2c_max_connection_per_server"],
+                "split": PERFORMANCE_CONFIG["aria2c_split"],
+                "min_split_size": PERFORMANCE_CONFIG["aria2c_min_split_size"],
+            }
         })
-    except Exception as e:
+    else:
         return jsonify({
-            "status": "exception",
-            "message": f"测试aria2c时出错: {e}"
+            "status": "error", 
+            "message": message
         })
 
 
@@ -540,22 +600,25 @@ def api_performance_status():
         "system_info": {
             "thread_pool_workers": MAX_WORKERS,
             "has_aria2c": PERFORMANCE_CONFIG["has_aria2c"],
-            "using_aria2c": False,  # 当前不使用aria2c以确保进度显示
+            "using_aria2c": False,  # 运行时动态选择
             "concurrent_fragments": PERFORMANCE_CONFIG["concurrent_fragments"],
             "buffersize": PERFORMANCE_CONFIG["buffersize"],
             "http_chunk_size": PERFORMANCE_CONFIG["http_chunk_size"],
+            "aria2c_available": PERFORMANCE_CONFIG["has_aria2c"],
         },
         "optimization_features": [
             f"🧵 线程池复用 ({MAX_WORKERS}工作线程)",
             f"🚀 yt-dlp内置优化 ({PERFORMANCE_CONFIG['concurrent_fragments']}线程并发)",
-            f"⚡ 进度推送节流 ({int(PERFORMANCE_CONFIG['progress_throttle']*1000)}ms)",
+            f"⚡ aria2c外部加速器 ({'可用' if PERFORMANCE_CONFIG['has_aria2c'] else '不可用'})",
+            f"📊 进度推送节流 ({int(PERFORMANCE_CONFIG['progress_throttle']*1000)}ms)",
             f"💾 大缓冲区 ({PERFORMANCE_CONFIG['buffersize']//1024}KB)",
             f"📦 大块下载 ({PERFORMANCE_CONFIG['http_chunk_size']//1024//1024}MB)",
             "🔄 智能User-Agent轮换",
             "🎯 原始格式极速下载",
             f"📈 智能重试策略 ({PERFORMANCE_CONFIG['retries']}次)",
             "✅ 进度显示正常工作",
-            "🔗 断点续传支持"
+            "🔗 断点续传支持",
+            "🔧 动态下载器选择"
         ]
     })
 
@@ -584,10 +647,11 @@ def on_join(data: dict):
 # ────────────── Entrypoint ──────────────
 if __name__ == "__main__":
     print("🎬 Downloader server running at http://0.0.0.0:5000")
-    print("🚀 高性能优化版本已启用（确保进度显示正常）！")
+    print("🚀 高性能优化版本已启用（支持下载器选择）！")
     print("✨ 性能特性:")
     print(f"   • 线程池复用: {MAX_WORKERS} 工作线程")
     print(f"   • yt-dlp内置优化: {PERFORMANCE_CONFIG['concurrent_fragments']} 线程并发")
+    print(f"   • aria2c外部加速: {'可用' if PERFORMANCE_CONFIG['has_aria2c'] else '不可用'}")
     print(f"   • 大缓冲区: {PERFORMANCE_CONFIG['buffersize']//1024}KB")
     print(f"   • 大块下载: {PERFORMANCE_CONFIG['http_chunk_size']//1024//1024}MB")
     print(f"   • 进度推送节流: {int(PERFORMANCE_CONFIG['progress_throttle']*1000)}ms")
@@ -595,9 +659,15 @@ if __name__ == "__main__":
     print("   • User-Agent 轮换池")
     print("   • 原始格式极速下载")
     print("   • ✅ 进度显示正常工作")
+    print("   • 🔧 动态下载器选择")
     
     if PERFORMANCE_CONFIG["has_aria2c"]:
-        print("   ℹ️  检测到aria2c但未使用（优先保证进度显示正常）")
+        print("   ✅ aria2c加速器可用")
+        print(f"      - 最大连接数: {PERFORMANCE_CONFIG['aria2c_max_connection_per_server']}")
+        print(f"      - 分片数: {PERFORMANCE_CONFIG['aria2c_split']}")
+        print(f"      - 最小分片: {PERFORMANCE_CONFIG['aria2c_min_split_size']}")
+    else:
+        print("   ❌ aria2c未安装，仅可使用yt-dlp内置下载器")
     
     socketio.run(
         app,
