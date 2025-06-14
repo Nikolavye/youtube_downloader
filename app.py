@@ -124,15 +124,10 @@ def get_optimal_user_agent():
 
 def check_aria2c_availability():
     """检查aria2c是否可用"""
-    print("开始检查aria2c可用性...")
-    
     if not PERFORMANCE_CONFIG["has_aria2c"]:
-        message = "aria2c 未安装或不在 PATH 中"
-        print(f"aria2c检查结果: {message}")
-        return False, message
+        return False, "aria2c 未安装或不在 PATH 中"
     
     try:
-        print("尝试执行aria2c --version...")
         result = subprocess.run(
             ["aria2c", "--version"], 
             capture_output=True, 
@@ -140,30 +135,16 @@ def check_aria2c_availability():
             timeout=5
         )
         
-        print(f"aria2c命令执行结果: 返回码={result.returncode}")
-        if result.stdout:
-            print(f"aria2c标准输出: {result.stdout[:200]}...")
-        if result.stderr:
-            print(f"aria2c错误输出: {result.stderr[:200]}...")
-        
         if result.returncode == 0:
             version_line = result.stdout.split('\n')[0]
-            message = f"aria2c 可用: {version_line}"
-            print(f"✅ aria2c检查成功: {message}")
-            return True, message
+            return True, f"aria2c 可用: {version_line}"
         else:
-            message = f"aria2c 执行错误: {result.stderr}"
-            print(f"❌ aria2c检查失败: {message}")
-            return False, message
+            return False, f"aria2c 执行错误: {result.stderr}"
             
     except subprocess.TimeoutExpired:
-        message = "aria2c 响应超时"
-        print(f"⏰ aria2c检查超时: {message}")
-        return False, message
+        return False, "aria2c 响应超时"
     except Exception as e:
-        message = f"测试aria2c时出错: {e}"
-        print(f"💥 aria2c检查异常: {message}")
-        return False, message
+        return False, f"测试aria2c时出错: {e}"
 
 
 # ────────────── 下载进度回调 (带节流) ──────────────
@@ -470,86 +451,64 @@ def index():
 
 @app.route("/api/download", methods=["POST"])
 def api_download():
+    data = request.get_json(force=True)
+    url = data.get("url", "").strip()
+    dtype = data.get("type", "video")
+    session_id = data.get("session_id")
+    downloader = data.get("downloader", "ytdlp")
+
+    # 参数验证
+    if not url:
+        return jsonify({"error": "缺少 URL"}), 400
+    if dtype not in {"video", "audio"}:
+        return jsonify({"error": f"不支持的下载类型: {dtype}"}), 400
+    if downloader not in {"ytdlp", "aria2c"}:
+        return jsonify({"error": f"不支持的下载器类型: {downloader}"}), 400
     try:
-        print("收到下载请求")
-        data = request.get_json(force=True)
-        print(f"请求数据: {data}")
-        
-        url = data.get("url", "").strip()
-        dtype = data.get("type", "video")
-        session_id = data.get("session_id")
-        downloader = data.get("downloader", "ytdlp")
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "无效的 URL"}), 400
+    if not session_id:
+        return jsonify({"error": "缺少 session_id"}), 400
 
-        print(f"解析参数 - URL: {url}, 类型: {dtype}, 会话: {session_id}, 下载器: {downloader}")
+    # 检查aria2c可用性
+    if downloader == "aria2c":
+        is_available, message = check_aria2c_availability()
+        if not is_available:
+            # 自动回退到yt-dlp
+            data["downloader"] = "ytdlp"
+            downloader = "ytdlp"
+            print(f"aria2c不可用，自动回退到yt-dlp: {message}")
 
-        # 参数验证
-        if not url:
-            print("错误: 缺少 URL")
-            return jsonify({"error": "缺少 URL"}), 400
-        if dtype not in {"video", "audio"}:
-            print(f"错误: 不支持的下载类型: {dtype}")
-            return jsonify({"error": f"不支持的下载类型: {dtype}"}), 400
-        if downloader not in {"ytdlp", "aria2c"}:
-            print(f"错误: 不支持的下载器类型: {downloader}")
-            return jsonify({"error": f"不支持的下载器类型: {downloader}"}), 400
-        try:
-            parsed = urlparse(url)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError("URL格式无效")
-        except ValueError as e:
-            print(f"错误: 无效的 URL - {e}")
-            return jsonify({"error": "无效的 URL"}), 400
-        if not session_id:
-            print("错误: 缺少 session_id")
-            return jsonify({"error": "缺少 session_id"}), 400
-
-        # 检查aria2c可用性
-        if downloader == "aria2c":
-            print("检查aria2c可用性...")
-            is_available, message = check_aria2c_availability()
-            if not is_available:
-                # 自动回退到yt-dlp
-                data["downloader"] = "ytdlp"
-                downloader = "ytdlp"
-                print(f"aria2c不可用，自动回退到yt-dlp: {message}")
-
-        # 提交到线程池
-        print(f"提交下载任务到线程池: {session_id}")
-        EXECUTOR.submit(download_media, data, session_id)
-        
-        # 构建响应
-        is_original = False
-        format_info = "转换格式"
-        
-        if dtype == "audio":
-            audio_format = data.get("audio_format", "mp3")
-            is_original = (audio_format == "original")
-            format_info = "原始格式" if is_original else f"{audio_format.upper()}格式"
-        elif dtype == "video":
-            video_format = data.get("video_format", "original")
-            is_original = (video_format == "original")
-            format_info = "原始格式" if is_original else f"{video_format.upper()}格式"
-        
-        downloader_name = "aria2c加速器" if downloader == "aria2c" else "yt-dlp优化版"
-        
-        response_data = {
-            "message": "任务已提交",
-            "session_id": session_id,
-            "type": dtype,
-            "format": format_info,
-            "is_original": is_original,
-            "downloader": downloader_name,
-            "performance_mode": f"高性能模式 ({downloader_name})",
-        }
-        
-        print(f"返回响应: {response_data}")
-        return jsonify(response_data)
-        
-    except Exception as e:
-        print(f"API处理异常: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"服务器内部错误: {str(e)}"}), 500
+    # 提交到线程池
+    EXECUTOR.submit(download_media, data, session_id)
+    
+    # 构建响应
+    is_original = False
+    format_info = "转换格式"
+    
+    if dtype == "audio":
+        audio_format = data.get("audio_format", "mp3")
+        is_original = (audio_format == "original")
+        format_info = "原始格式" if is_original else f"{audio_format.upper()}格式"
+    elif dtype == "video":
+        video_format = data.get("video_format", "original")
+        is_original = (video_format == "original")
+        format_info = "原始格式" if is_original else f"{video_format.upper()}格式"
+    
+    downloader_name = "aria2c加速器" if downloader == "aria2c" else "yt-dlp优化版"
+    
+    return jsonify({
+        "message": "任务已提交",
+        "session_id": session_id,
+        "type": dtype,
+        "format": format_info,
+        "is_original": is_original,
+        "downloader": downloader_name,
+        "performance_mode": f"高性能模式 ({downloader_name})",
+    })
 
 
 @app.route("/api/status/<session_id>")
@@ -608,43 +567,29 @@ def api_download_file(filename: str):
 @app.route("/api/test-aria2c")
 def test_aria2c():
     """测试aria2c是否可用"""
-    try:
-        print("收到aria2c测试请求")
-        is_available, message = check_aria2c_availability()
-        print(f"aria2c检测结果: 可用={is_available}, 消息={message}")
-        
-        if not PERFORMANCE_CONFIG["has_aria2c"]:
-            response_data = {
-                "status": "not_found",
-                "message": message
-            }
-        elif is_available:
-            response_data = {
-                "status": "available_but_not_used",
-                "message": message,
-                "aria2c_config": {
-                    "max_connection_per_server": PERFORMANCE_CONFIG["aria2c_max_connection_per_server"],
-                    "split": PERFORMANCE_CONFIG["aria2c_split"],
-                    "min_split_size": PERFORMANCE_CONFIG["aria2c_min_split_size"],
-                }
-            }
-        else:
-            response_data = {
-                "status": "error", 
-                "message": message
-            }
-        
-        print(f"返回aria2c测试响应: {response_data}")
-        return jsonify(response_data)
-        
-    except Exception as e:
-        print(f"aria2c测试异常: {e}")
-        import traceback
-        traceback.print_exc()
+    is_available, message = check_aria2c_availability()
+    
+    if not PERFORMANCE_CONFIG["has_aria2c"]:
         return jsonify({
-            "status": "exception",
-            "message": f"测试过程中发生异常: {str(e)}"
-        }), 500
+            "status": "not_found",
+            "message": message
+        })
+    
+    if is_available:
+        return jsonify({
+            "status": "available_but_not_used",
+            "message": message,
+            "aria2c_config": {
+                "max_connection_per_server": PERFORMANCE_CONFIG["aria2c_max_connection_per_server"],
+                "split": PERFORMANCE_CONFIG["aria2c_split"],
+                "min_split_size": PERFORMANCE_CONFIG["aria2c_min_split_size"],
+            }
+        })
+    else:
+        return jsonify({
+            "status": "error", 
+            "message": message
+        })
 
 
 @app.route("/api/performance-status")
@@ -716,24 +661,13 @@ if __name__ == "__main__":
     print("   • ✅ 进度显示正常工作")
     print("   • 🔧 动态下载器选择")
     
-    # 详细检查aria2c状态
-    print("\n🔍 系统检查:")
     if PERFORMANCE_CONFIG["has_aria2c"]:
-        print("   ✅ aria2c在系统PATH中发现")
-        is_available, message = check_aria2c_availability()
-        if is_available:
-            print(f"   ✅ aria2c功能测试通过: {message}")
-            print(f"      - 最大连接数: {PERFORMANCE_CONFIG['aria2c_max_connection_per_server']}")
-            print(f"      - 分片数: {PERFORMANCE_CONFIG['aria2c_split']}")
-            print(f"      - 最小分片: {PERFORMANCE_CONFIG['aria2c_min_split_size']}")
-        else:
-            print(f"   ⚠️  aria2c功能测试失败: {message}")
+        print("   ✅ aria2c加速器可用")
+        print(f"      - 最大连接数: {PERFORMANCE_CONFIG['aria2c_max_connection_per_server']}")
+        print(f"      - 分片数: {PERFORMANCE_CONFIG['aria2c_split']}")
+        print(f"      - 最小分片: {PERFORMANCE_CONFIG['aria2c_min_split_size']}")
     else:
         print("   ❌ aria2c未安装，仅可使用yt-dlp内置下载器")
-    
-    print(f"\n📁 下载目录: {DOWNLOAD_DIR}")
-    print(f"🔧 调试模式: {'开启' if app.debug else '关闭'}")
-    print("="*60)
     
     socketio.run(
         app,

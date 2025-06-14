@@ -4,3 +4,6 @@ yt-dlp==2025.6.99
 python-engineio==4.9.0
 python-socketio==5.11.1
 gunicorn[eventlet]==21.2.0
+# caria2c进度条
+# 删掉无用测试代码
+# 后端logger

@@ -1353,7 +1353,7 @@
     <div class="container">
         <div class="header">
             <h1>🎬 视频音频下载器</h1>
-            <p>🚀 性能优化版 (可选下载器) • 原始格式下载 • 8线程并发 • 智能重试 • 极速无损</p>
+            <p>🚀 性能优化版 (智能下载器选择) • 8线程并发 • 智能重试 • 极速无损 • 支持600+网站</p>
         </div>
         
         <div class="content">
@@ -1586,20 +1586,34 @@
     <script>
         class VideoDownloader {
             constructor() {
-                this.sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-                this.socket = null;
-                this.isDownloading = false;
-                this.downloadTimeout = null;
-                this.allFiles = []; // 存储所有文件数据
-                
-                this.initElements();
-                this.initSocket();
-                this.bindEvents();
-                this.loadDownloadsList();
-                this.initializeState();
-                this.checkDownloaderStatus(); // 检查下载器状态
-                
-                console.log('VideoDownloader initialized with session:', this.sessionId);
+                try {
+                    console.log('🚀 VideoDownloader 开始初始化...');
+                    
+                    this.sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                    this.socket = null;
+                    this.isDownloading = false;
+                    this.downloadTimeout = null;
+                    this.allFiles = []; // 存储所有文件数据
+                    
+                    console.log('Session ID:', this.sessionId);
+                    
+                    this.initElements();
+                    this.initSocket();
+                    this.bindEvents();
+                    this.loadDownloadsList();
+                    this.initializeState();
+                    
+                    // 延迟检查下载器状态，确保页面完全加载
+                    setTimeout(() => {
+                        this.checkDownloaderStatus();
+                    }, 500);
+                    
+                    console.log('✅ VideoDownloader 初始化完成');
+                    
+                } catch (error) {
+                    console.error('❌ VideoDownloader 初始化失败:', error);
+                    alert('页面初始化失败，请刷新页面重试。错误详情: ' + error.message);
+                }
             }
             
             initializeState() {
@@ -1613,6 +1627,8 @@
             }
             
             initElements() {
+                console.log('初始化页面元素...');
+                
                 this.urlInput = document.getElementById('urlInput');
                 this.downloadBtn = document.getElementById('downloadBtn');
                 this.progressContainer = document.getElementById('progressContainer');
@@ -1649,6 +1665,21 @@
                 
                 // 过滤器元素
                 this.fileTypeFilter = document.getElementById('fileTypeFilter');
+                
+                // 检查关键元素是否存在
+                const criticalElements = [
+                    'urlInput', 'downloadBtn', 'downloaderStatus', 'downloaderTypeRadios'
+                ];
+                
+                for (const elementName of criticalElements) {
+                    if (!this[elementName]) {
+                        console.error(`关键元素缺失: ${elementName}`);
+                    } else {
+                        console.log(`✓ ${elementName} 元素已找到`);
+                    }
+                }
+                
+                console.log('页面元素初始化完成');
             }
             
             initSocket() {
@@ -1670,60 +1701,143 @@
             }
             
             bindEvents() {
-                this.downloadBtn.addEventListener('click', () => this.startDownload());
-                this.refreshBtn.addEventListener('click', () => this.loadDownloadsList());
-                this.performanceBtn.addEventListener('click', () => this.showPerformanceModal());
-                this.testAria2cBtn.addEventListener('click', () => this.testAria2c());
+                console.log('开始绑定页面事件...');
                 
-                this.urlInput.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter' && !this.isDownloading) {
+                // 下载按钮事件
+                if (this.downloadBtn) {
+                    console.log('绑定下载按钮点击事件...');
+                    this.downloadBtn.addEventListener('click', (e) => {
+                        console.log('🔥 下载按钮被点击了！', e);
+                        console.log('当前下载状态:', this.isDownloading);
                         this.startDownload();
-                    }
-                });
+                    });
+                    console.log('✅ 下载按钮事件绑定完成');
+                } else {
+                    console.error('❌ 下载按钮元素不存在，无法绑定事件');
+                }
                 
-                this.urlInput.addEventListener('input', () => {
-                    this.downloadBtn.disabled = !this.urlInput.value.trim() || this.isDownloading;
-                });
+                // 其他按钮事件
+                if (this.refreshBtn) {
+                    this.refreshBtn.addEventListener('click', () => {
+                        console.log('刷新按钮被点击');
+                        this.loadDownloadsList();
+                    });
+                } else {
+                    console.warn('⚠️ 刷新按钮元素不存在');
+                }
+                
+                if (this.performanceBtn) {
+                    this.performanceBtn.addEventListener('click', () => {
+                        console.log('性能状态按钮被点击');
+                        this.showPerformanceModal();
+                    });
+                } else {
+                    console.warn('⚠️ 性能按钮元素不存在');
+                }
+                
+                if (this.testAria2cBtn) {
+                    this.testAria2cBtn.addEventListener('click', () => {
+                        console.log('测试aria2c按钮被点击');
+                        this.testAria2c();
+                    });
+                } else {
+                    console.warn('⚠️ 测试aria2c按钮元素不存在');
+                }
+                
+                // URL输入框事件
+                if (this.urlInput) {
+                    this.urlInput.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter' && !this.isDownloading) {
+                            console.log('Enter键触发下载');
+                            this.startDownload();
+                        }
+                    });
+                    
+                    this.urlInput.addEventListener('input', () => {
+                        const hasValue = !!this.urlInput.value.trim();
+                        const shouldEnable = hasValue && !this.isDownloading;
+                        this.downloadBtn.disabled = !shouldEnable;
+                        console.log(`URL输入变化: 有值=${hasValue}, 应启用=${shouldEnable}`);
+                    });
+                    console.log('✅ URL输入框事件绑定完成');
+                } else {
+                    console.error('❌ URL输入框元素不存在');
+                }
                 
                 // 下载器类型切换事件
-                this.downloaderTypeRadios.forEach(radio => {
-                    radio.addEventListener('change', (e) => {
-                        this.handleDownloaderChange(e.target.value);
+                if (this.downloaderTypeRadios && this.downloaderTypeRadios.length > 0) {
+                    console.log(`绑定 ${this.downloaderTypeRadios.length} 个下载器选择按钮事件...`);
+                    this.downloaderTypeRadios.forEach((radio, index) => {
+                        radio.addEventListener('change', (e) => {
+                            console.log(`下载器类型切换: ${e.target.value} (按钮${index})`);
+                            this.handleDownloaderChange(e.target.value);
+                        });
                     });
-                });
+                    console.log('✅ 下载器选择事件绑定完成');
+                } else {
+                    console.error('❌ 下载器选择按钮不存在或为空');
+                }
                 
                 // 下载类型切换事件
-                this.downloadTypeRadios.forEach(radio => {
-                    radio.addEventListener('change', (e) => {
-                        this.handleDownloadTypeChange(e.target.value);
+                if (this.downloadTypeRadios && this.downloadTypeRadios.length > 0) {
+                    console.log(`绑定 ${this.downloadTypeRadios.length} 个下载类型选择按钮事件...`);
+                    this.downloadTypeRadios.forEach((radio, index) => {
+                        radio.addEventListener('change', (e) => {
+                            console.log(`下载类型切换: ${e.target.value} (按钮${index})`);
+                            this.handleDownloadTypeChange(e.target.value);
+                        });
                     });
-                });
+                    console.log('✅ 下载类型选择事件绑定完成');
+                } else {
+                    console.error('❌ 下载类型选择按钮不存在或为空');
+                }
                 
                 // 音频格式切换事件
-                this.audioFormat.addEventListener('change', (e) => {
-                    this.handleAudioFormatChange(e.target.value);
-                });
+                if (this.audioFormat) {
+                    this.audioFormat.addEventListener('change', (e) => {
+                        console.log(`音频格式切换: ${e.target.value}`);
+                        this.handleAudioFormatChange(e.target.value);
+                    });
+                    console.log('✅ 音频格式选择事件绑定完成');
+                } else {
+                    console.warn('⚠️ 音频格式选择元素不存在');
+                }
                 
                 // 视频格式切换事件
-                this.videoFormat.addEventListener('change', (e) => {
-                    this.handleVideoFormatChange(e.target.value);
-                });
+                if (this.videoFormat) {
+                    this.videoFormat.addEventListener('change', (e) => {
+                        console.log(`视频格式切换: ${e.target.value}`);
+                        this.handleVideoFormatChange(e.target.value);
+                    });
+                    console.log('✅ 视频格式选择事件绑定完成');
+                } else {
+                    console.warn('⚠️ 视频格式选择元素不存在');
+                }
                 
                 // 文件类型过滤器事件
-                this.fileTypeFilter.addEventListener('change', () => {
-                    this.filterAndDisplayFiles();
-                });
+                if (this.fileTypeFilter) {
+                    this.fileTypeFilter.addEventListener('change', () => {
+                        console.log('文件类型过滤器改变');
+                        this.filterAndDisplayFiles();
+                    });
+                    console.log('✅ 文件过滤器事件绑定完成');
+                } else {
+                    console.warn('⚠️ 文件过滤器元素不存在');
+                }
+                
+                console.log('✅ 所有页面事件绑定完成');
             }
             
             handleDownloaderChange(type) {
                 const statusMessages = {
                     'ytdlp': '✅ yt-dlp内置优化版已选择 - 高度优化，确保进度显示正常',
-                    'aria2c': '⚡ aria2c外部加速器已选择 - 极速下载，进度显示可能不稳定'
+                    'aria2c': '⚡ aria2c外部加速器已选择 - 极速下载，某些网站可能自动回退到yt-dlp'
                 };
                 
                 this.downloaderStatus.textContent = statusMessages[type] || '正在检测下载器状态...';
+                this.downloaderStatus.style.color = type === 'ytdlp' ? '#28a745' : '#fd7e14';
                 
-                // 如果选择aria2c，可以进行快速检测
+                // 如果选择aria2c，进行快速检测
                 if (type === 'aria2c') {
                     this.quickCheckAria2c();
                 }
@@ -1731,42 +1845,102 @@
             
             async quickCheckAria2c() {
                 try {
+                    console.log('快速检测aria2c...');
                     const response = await fetch('/api/test-aria2c');
+                    console.log('快速检测响应:', response.status);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
                     const data = await response.json();
+                    console.log('快速检测数据:', data);
+                    
+                    let statusText = '';
+                    let statusColor = '#155724';
                     
                     if (data.status === 'not_found') {
-                        this.downloaderStatus.textContent = '⚠️ aria2c未安装，将自动回退到yt-dlp内置下载器';
-                        this.downloaderStatus.style.color = '#fd7e14';
+                        statusText = '⚠️ aria2c未安装，将自动回退到yt-dlp内置下载器';
+                        statusColor = '#fd7e14';
                     } else if (data.status === 'available_but_not_used' || data.status === 'working') {
-                        this.downloaderStatus.textContent = '✅ aria2c可用 - 极速多线程下载模式';
-                        this.downloaderStatus.style.color = '#28a745';
+                        statusText = '✅ aria2c可用 - 极速多线程下载模式';
+                        statusColor = '#28a745';
                     } else {
-                        this.downloaderStatus.textContent = '⚠️ aria2c检测异常，建议使用yt-dlp内置下载器';
-                        this.downloaderStatus.style.color = '#fd7e14';
+                        statusText = '⚠️ aria2c检测异常，建议使用yt-dlp内置下载器';
+                        statusColor = '#fd7e14';
                     }
+                    
+                    this.downloaderStatus.textContent = statusText;
+                    this.downloaderStatus.style.color = statusColor;
+                    console.log('aria2c快速检测完成:', statusText);
+                    
                 } catch (error) {
-                    this.downloaderStatus.textContent = '⚠️ 下载器检测失败，使用默认设置';
+                    console.error('快速检测aria2c失败:', error);
+                    this.downloaderStatus.textContent = '⚠️ 下载器检测失败: ' + error.message;
                     this.downloaderStatus.style.color = '#fd7e14';
                 }
             }
             
             async checkDownloaderStatus() {
                 try {
+                    console.log('🏥 首先检查服务器健康状态...');
+                    
+                    // 先检查服务器是否在线
+                    try {
+                        const healthResponse = await fetch('/api/health');
+                        if (healthResponse.ok) {
+                            const healthData = await healthResponse.json();
+                            console.log('✅ 服务器健康检查通过:', healthData);
+                        } else {
+                            throw new Error(`服务器健康检查失败: ${healthResponse.status}`);
+                        }
+                    } catch (healthError) {
+                        console.error('❌ 服务器健康检查失败:', healthError);
+                        this.downloaderStatus.textContent = '❌ 无法连接到服务器，请检查服务器是否正常运行';
+                        this.downloaderStatus.style.color = '#dc3545';
+                        return;
+                    }
+                    
+                    console.log('🔍 检测下载器状态...');
+                    this.downloaderStatus.textContent = '正在检测下载器状态...';
+                    
                     const response = await fetch('/api/test-aria2c');
+                    console.log('📡 aria2c检测响应状态:', response.status);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
                     const data = await response.json();
+                    console.log('📋 aria2c检测数据:', data);
                     
                     let statusText = '';
+                    let statusColor = '#155724';
+                    
                     if (data.status === 'not_found') {
                         statusText = '❌ aria2c未安装，仅可使用yt-dlp内置下载器';
+                        statusColor = '#dc3545';
                     } else if (data.status === 'available_but_not_used' || data.status === 'working') {
                         statusText = '✅ 两种下载器均可用，请选择您偏好的下载器';
+                        statusColor = '#28a745';
                     } else {
                         statusText = '⚠️ aria2c状态异常，建议使用yt-dlp内置下载器';
+                        statusColor = '#fd7e14';
                     }
                     
                     this.downloaderStatus.textContent = statusText;
+                    this.downloaderStatus.style.color = statusColor;
+                    console.log('✅ 下载器状态更新完成:', statusText);
+                    
                 } catch (error) {
-                    this.downloaderStatus.textContent = '⚠️ 下载器状态检测失败';
+                    console.error('💥 检测下载器状态失败:', error);
+                    this.downloaderStatus.textContent = '⚠️ 下载器状态检测失败: ' + error.message;
+                    this.downloaderStatus.style.color = '#dc3545';
+                    
+                    // 如果是网络错误，给出更具体的提示
+                    if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                        this.downloaderStatus.textContent = '❌ 无法连接到服务器，请确认：1) 服务器是否正常运行 2) 网络连接是否正常';
+                    }
                 }
             }
             
@@ -1993,18 +2167,26 @@
             }
             
             async startDownload() {
+                console.log('开始下载流程...');
                 const url = this.urlInput.value.trim();
+                console.log('输入的URL:', url);
                 
-                if (!this.validateUrl(url)) return;
+                if (!this.validateUrl(url)) {
+                    console.log('URL验证失败');
+                    return;
+                }
                 
                 const downloadOptions = this.getDownloadOptions();
+                console.log('下载选项:', downloadOptions);
+                
                 this.setDownloadingState(downloadOptions.type, downloadOptions.downloader);
                 
                 try {
-                    await this.sendDownloadRequest(downloadOptions);
+                    const result = await this.sendDownloadRequest(downloadOptions);
+                    console.log('下载请求结果:', result);
                     this.setupDownloadTimeout();
                 } catch (error) {
-                    console.error('Download request failed:', error);
+                    console.error('下载请求失败:', error);
                     this.showMessage('❌ ' + error.message, 'error');
                     this.resetDownloadState();
                     this.hideProgressContainer();
@@ -2046,20 +2228,94 @@
             }
             
             async sendDownloadRequest(options) {
-                const response = await fetch('/api/download', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(options)
-                });
+                console.log('📤 准备发送下载请求...');
+                console.log('请求选项:', JSON.stringify(options, null, 2));
                 
-                const data = await response.json();
+                // 首先测试网络连接
+                await this.testNetworkConnection();
                 
-                if (!response.ok) {
-                    throw new Error(data.error || '请求失败');
+                try {
+                    const requestUrl = '/api/download';
+                    const requestOptions = {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify(options)
+                    };
+                    
+                    console.log('📍 请求URL:', requestUrl);
+                    console.log('📋 请求配置:', requestOptions);
+                    console.log('📦 请求体大小:', requestOptions.body.length, '字符');
+                    
+                    console.log('🚀 开始发送fetch请求...');
+                    const startTime = performance.now();
+                    
+                    const response = await fetch(requestUrl, requestOptions);
+                    
+                    const endTime = performance.now();
+                    console.log(`⏱️ 请求耗时: ${(endTime - startTime).toFixed(2)}ms`);
+                    console.log('📨 收到响应:', response);
+                    console.log('📊 响应状态:', response.status, response.statusText);
+                    console.log('📋 响应头:', [...response.headers.entries()]);
+                    
+                    if (!response.ok) {
+                        console.error('❌ HTTP请求失败:', response.status, response.statusText);
+                        
+                        let errorText;
+                        try {
+                            errorText = await response.text();
+                            console.error('❌ 错误响应内容:', errorText);
+                        } catch (e) {
+                            console.error('❌ 无法读取错误响应:', e);
+                            errorText = `HTTP ${response.status}: ${response.statusText}`;
+                        }
+                        
+                        throw new Error(errorText);
+                    }
+                    
+                    console.log('📖 开始解析JSON响应...');
+                    const data = await response.json();
+                    console.log('✅ JSON解析成功:', data);
+                    
+                    // 检查是否有智能优化信息
+                    if (data.smart_optimization && data.optimization_reason) {
+                        console.log('🧠 智能优化:', data.optimization_reason);
+                        this.showMessage(`🧠 ${data.optimization_reason}`, 'success');
+                    }
+                    
+                    this.progressBarText.textContent = '请求已发送，等待响应...';
+                    console.log('✅ 下载请求发送成功');
+                    return data;
+                    
+                } catch (error) {
+                    console.error('💥 发送下载请求时发生错误:', error);
+                    console.error('💥 错误类型:', error.constructor.name);
+                    console.error('💥 错误消息:', error.message);
+                    console.error('💥 错误堆栈:', error.stack);
+                    
+                    // 检查常见的网络错误
+                    if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                        console.error('🌐 这可能是网络连接问题或CORS问题');
+                    }
+                    
+                    throw error;
                 }
-                
-                console.log('Download request sent successfully:', data);
-                this.progressBarText.textContent = '请求已发送，等待响应...';
+            }
+            
+            async testNetworkConnection() {
+                try {
+                    console.log('🔍 测试网络连接...');
+                    const testResponse = await fetch('/api/test-aria2c', {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    console.log('✅ 网络连接正常, 状态:', testResponse.status);
+                } catch (error) {
+                    console.error('❌ 网络连接测试失败:', error);
+                    throw new Error('网络连接失败，请检查服务器是否正常运行');
+                }
             }
             
             setupDownloadTimeout() {
@@ -2333,3 +2589,118 @@
                 
                 // 更新优化特性列表
                 const featuresContainer = document.getElementById('optimizationFeatures');
+                if (data.optimization_features) {
+                    featuresContainer.innerHTML = data.optimization_features
+                        .map(feature => `<div class="feature-item">${feature}</div>`)
+                        .join('');
+                }
+            }
+        }
+        
+        // 初始化应用
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                console.log('📄 DOM 内容已加载，开始初始化应用...');
+                
+                // 检查基本的DOM元素是否存在
+                const requiredElements = [
+                    'urlInput', 'downloadBtn', 'downloaderStatus', 
+                    'progressContainer', 'downloadsList'
+                ];
+                
+                for (const elementId of requiredElements) {
+                    const element = document.getElementById(elementId);
+                    if (!element) {
+                        throw new Error(`必需的页面元素缺失: ${elementId}`);
+                    }
+                }
+                
+                // 初始化应用
+                window.videoDownloader = new VideoDownloader();
+                console.log('✅ 应用初始化成功');
+                
+                // 添加调试工具
+                window.debugDownloader = {
+                    testDownload: () => {
+                        console.log('🧪 开始调试测试...');
+                        if (window.videoDownloader) {
+                            window.videoDownloader.urlInput.value = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+                            console.log('📝 已设置测试URL');
+                            window.videoDownloader.startDownload();
+                        }
+                    },
+                    checkElements: () => {
+                        console.log('🔍 检查页面元素:');
+                        requiredElements.forEach(id => {
+                            const el = document.getElementById(id);
+                            console.log(`  ${id}: ${el ? '✅ 存在' : '❌ 缺失'}`);
+                        });
+                    },
+                    testNetwork: async () => {
+                        console.log('🌐 测试网络连接...');
+                        try {
+                            const response = await fetch('/api/test-aria2c');
+                            console.log('✅ 网络测试成功:', response.status);
+                            const data = await response.json();
+                            console.log('📄 响应数据:', data);
+                        } catch (error) {
+                            console.error('❌ 网络测试失败:', error);
+                        }
+                    },
+                    showStatus: () => {
+                        if (window.videoDownloader) {
+                            console.log('📊 当前状态:');
+                            console.log('  下载中:', window.videoDownloader.isDownloading);
+                            console.log('  会话ID:', window.videoDownloader.sessionId);
+                            console.log('  Socket连接:', window.videoDownloader.socket?.connected);
+                        }
+                    }
+                };
+                
+                console.log('🛠️ 调试工具已就绪 - 在控制台中输入 debugDownloader 查看可用命令');
+                console.log('例如: debugDownloader.testNetwork() 或 debugDownloader.testDownload()');
+                
+            } catch (error) {
+                console.error('❌ 应用初始化失败:', error);
+                
+                // 显示错误信息给用户
+                const errorDiv = document.createElement('div');
+                errorDiv.style.cssText = `
+                    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+                    background: #f8d7da; color: #721c24; padding: 15px 20px;
+                    border: 1px solid #f5c6cb; border-radius: 8px;
+                    z-index: 10000; font-family: Arial, sans-serif;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                `;
+                errorDiv.innerHTML = `
+                    <strong>❌ 应用初始化失败</strong><br>
+                    ${error.message}<br>
+                    <small>请刷新页面重试，或检查浏览器控制台获取详细信息</small>
+                `;
+                document.body.appendChild(errorDiv);
+                
+                // 3秒后自动隐藏错误信息
+                setTimeout(() => {
+                    if (errorDiv.parentNode) {
+                        errorDiv.parentNode.removeChild(errorDiv);
+                    }
+                }, 8000);
+            }
+        });
+        
+        // 全局函数：关闭性能模态框
+        function hidePerformanceModal() {
+            const modal = document.getElementById('performanceModal');
+            modal.classList.remove('show');
+        }
+        
+        // 点击模态框外部关闭
+        document.addEventListener('click', (e) => {
+            const modal = document.getElementById('performanceModal');
+            if (e.target === modal) {
+                hidePerformanceModal();
+            }
+        });
+    </script>
+</body>
+</html>
