@@ -10,6 +10,7 @@ app_ultimate.py – Flask-SocketIO 后端 (终极优化版 + 下载器选择)
 • 性能监控 + 智能重试策略
 • 进度节流 + User-Agent 轮换
 • 确保进度条正常显示
+• 修复音频下载问题，仅支持mp3和wav
 """
 
 import os
@@ -44,7 +45,21 @@ ORIGINAL_OUTTMPL = "%(title,id)s[original].%(ext)s"
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "change-me"
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+# 添加CORS处理
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
+
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*", 
+    async_mode="threading",
+    logger=True,  # 启用详细日志
+    engineio_logger=True  # 启用引擎日志
+)
 
 # ────────────── 线程池与下载状态缓存 ──────────────
 MAX_WORKERS = int(os.getenv("DL_WORKERS", "6"))
@@ -99,7 +114,7 @@ def format_bytes(num: float | int) -> str:
 
 def get_file_type_info(ext: str):
     ext = ext.lower()
-    audio_set = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".flac", ".webm"}
+    audio_set = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".webm"}
     video_set = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v"}
     if ext in audio_set:
         return "audio", "🎵"
@@ -145,6 +160,20 @@ def check_aria2c_availability():
         return False, "aria2c 响应超时"
     except Exception as e:
         return False, f"测试aria2c时出错: {e}"
+
+
+def check_ffmpeg_availability():
+    """检查FFmpeg是否可用"""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-version"], 
+            capture_output=True, 
+            text=True, 
+            timeout=5
+        )
+        return result.returncode == 0
+    except:
+        return False
 
 
 # ────────────── 下载进度回调 (带节流) ──────────────
@@ -227,13 +256,6 @@ class DownloadProgress:
 
 
 # ────────────── yt-dlp 配置生成 ──────────────
-def build_audio_format_string(fmt: str, quality: str | int):
-    if str(quality) == "0":
-        return "bestaudio/best"
-    target = int(quality)
-    return f"bestaudio[abr<={target + 128}]/bestaudio/best"
-
-
 def generate_ydl_options(opts: dict, prog: DownloadProgress):
     """生成yt-dlp配置，根据下载器类型选择不同的策略"""
     
@@ -263,18 +285,29 @@ def generate_ydl_options(opts: dict, prog: DownloadProgress):
         "keep_fragments": False,
         "prefer_free_formats": True,
         
-        # YouTube专用优化
+        # 403错误解决方案 - 增强YouTube兼容性
         "extractor_args": {
             "youtube": {
-                "player_client": ["web"],  # 只使用web客户端
-                "formats": "missing_pot"  # 启用缺少PO Token的格式
+                "player_client": ["web_embedded", "web", "ios", "android"],  # 多客户端策略
+                "formats": "missing_pot",  # 启用缺少PO Token的格式
+                "player_skip": ["configs"],  # 跳过一些配置请求
+                "bypass_native_jsi": True,  # 绕过原生JSI
             }
         },
         
         # 连接优化
         "source_address": None,  # 让系统自动选择
         "force_ipv4": False,
-        "sleep_interval": 0,
+        "sleep_interval": 2,  # 增加请求间隔避免被封
+        "sleep_interval_requests": 1,  # 请求间休眠
+        
+        # 403错误缓解措施
+        "geo_bypass": True,  # 启用地理绕过
+        "geo_bypass_country": "US",  # 设置绕过国家
+        "age_limit": None,  # 移除年龄限制
+        
+        # 缓存管理
+        "cachedir": False,  # 禁用缓存避免403
     }
 
     # 根据下载器类型配置
@@ -344,7 +377,7 @@ def generate_ydl_options(opts: dict, prog: DownloadProgress):
         audio_format = opts.get("audio_format", "mp3")
         
         if audio_format == "original":
-            # 原始格式音频 - 使用更宽松的选择
+            # 原始格式音频 - 直接下载最佳音频
             base.update({
                 "format": "bestaudio/best",
                 "outtmpl": os.path.join(DOWNLOAD_DIR, ORIGINAL_OUTTMPL),
@@ -352,26 +385,39 @@ def generate_ydl_options(opts: dict, prog: DownloadProgress):
                 "writethumbnail": False,
             })
         else:
-            # 转换格式
+            # 音频转换 - 仅支持mp3和wav
+            if audio_format not in ["mp3", "wav"]:
+                audio_format = "mp3"  # 默认回退到mp3
+            
             audio_quality = opts.get("audio_quality", "192")
-            fmt = build_audio_format_string(audio_format, audio_quality)
             
-            postprocessors = [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": audio_format,
-                "preferredquality": str(audio_quality),
-            }]
-            
-            if opts.get("embed_thumbnail"):
-                postprocessors.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
-            if opts.get("embed_metadata"):
-                postprocessors.append({"key": "FFmpegMetadata"})
-            
+            # 简化音频格式选择
             base.update({
-                "format": fmt,
+                "format": "bestaudio[ext=m4a]/bestaudio[ext=aac]/bestaudio[ext=mp3]/bestaudio/best",
                 "outtmpl": os.path.join(DOWNLOAD_DIR, SAFE_OUTTMPL),
-                "postprocessors": postprocessors,
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": audio_format,
+                    "preferredquality": str(audio_quality),
+                    "nopostoverwrites": False,
+                }],
+                "writeinfojson": False,
+                "writethumbnail": False,
+                "embedsubtitles": False,
             })
+            
+            # 可选的额外处理
+            if opts.get("embed_thumbnail") and audio_format == "mp3":
+                base["postprocessors"].append({
+                    "key": "EmbedThumbnail", 
+                    "already_have_thumbnail": False
+                })
+            
+            if opts.get("embed_metadata"):
+                base["postprocessors"].append({
+                    "key": "FFmpegMetadata",
+                    "add_metadata": True,
+                })
 
     return base
 
@@ -382,6 +428,16 @@ def download_media(opts: dict, session_id: str):
     url = opts["url"]
     dtype = opts["type"]
     downloader_type = opts.get("downloader", "ytdlp")
+    
+    # 检查FFmpeg可用性（音频转换需要）
+    if dtype == "audio" and opts.get("audio_format", "mp3") != "original":
+        if not check_ffmpeg_availability():
+            progress = DownloadProgress(session_id, downloader_type)
+            progress._emit({
+                "status": "error", 
+                "message": "FFmpeg未安装或不可用，无法进行音频转换。请安装FFmpeg或选择原始格式下载。"
+            })
+            return
     
     is_original = False
     if dtype == "audio":
@@ -440,7 +496,12 @@ def download_media(opts: dict, session_id: str):
 
     except Exception as exc:
         print(f"下载失败: {exc}")
-        progress._emit({"status": "error", "message": f"下载失败: {exc}"})
+        error_msg = str(exc)
+        if "ffmpeg" in error_msg.lower():
+            error_msg = "FFmpeg处理失败，可能是编解码器问题。建议尝试原始格式下载。"
+        elif "postprocessor" in error_msg.lower():
+            error_msg = "后处理失败，建议尝试原始格式下载。"
+        progress._emit({"status": "error", "message": f"下载失败: {error_msg}"})
 
 
 # ────────────── Flask 路由 ──────────────
@@ -472,6 +533,12 @@ def api_download():
         return jsonify({"error": "无效的 URL"}), 400
     if not session_id:
         return jsonify({"error": "缺少 session_id"}), 400
+
+    # 音频格式验证 - 仅支持mp3和wav
+    if dtype == "audio":
+        audio_format = data.get("audio_format", "mp3")
+        if audio_format not in ["original", "mp3", "wav"]:
+            data["audio_format"] = "mp3"  # 回退到默认mp3
 
     # 检查aria2c可用性
     if downloader == "aria2c":
@@ -508,6 +575,7 @@ def api_download():
         "is_original": is_original,
         "downloader": downloader_name,
         "performance_mode": f"高性能模式 ({downloader_name})",
+        "supported_audio_formats": ["original", "mp3", "wav"] if dtype == "audio" else None,
     })
 
 
@@ -592,6 +660,229 @@ def test_aria2c():
         })
 
 
+@app.route("/api/clear-cache")
+def clear_cache():
+    """清理yt-dlp缓存以解决403错误"""
+    try:
+        # 尝试清理yt-dlp缓存
+        cache_dirs = [
+            os.path.expanduser("~/.cache/yt-dlp"),
+            os.path.expanduser("~/.cache/youtube-dl"),
+            os.path.join(BASE_DIR, ".cache"),
+        ]
+        
+        cleared_dirs = []
+        for cache_dir in cache_dirs:
+            if os.path.exists(cache_dir):
+                try:
+                    shutil.rmtree(cache_dir)
+                    cleared_dirs.append(cache_dir)
+                except:
+                    pass
+        
+        return jsonify({
+            "status": "success",
+            "message": f"缓存清理完成，清理了 {len(cleared_dirs)} 个缓存目录",
+            "cleared_dirs": cleared_dirs
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"缓存清理失败: {e}"
+        })
+
+
+@app.route("/api/update-ytdlp")
+def update_ytdlp():
+    """尝试更新yt-dlp"""
+    try:
+        result = subprocess.run(
+            ["pip", "install", "--upgrade", "yt-dlp"], 
+            capture_output=True, 
+            text=True, 
+            timeout=60
+        )
+        
+        if result.returncode == 0:
+            return jsonify({
+                "status": "success",
+                "message": "yt-dlp更新成功",
+                "output": result.stdout
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "yt-dlp更新失败",
+                "error": result.stderr
+            })
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            "status": "error",
+            "message": "更新超时，请手动执行: pip install --upgrade yt-dlp"
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"更新失败: {e}，请手动执行: pip install --upgrade yt-dlp"
+        })
+
+
+@app.route("/api/test-download")
+def test_download():
+    """测试下载一个简单视频来检查403问题"""
+    test_url = "https://www.youtube.com/watch?v=BaW_jenozKc"  # YouTube测试视频
+    
+    try:
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "simulate": True,  # 仅模拟，不实际下载
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["web_embedded", "web"],
+                    "formats": "missing_pot",
+                }
+            },
+            "http_headers": {
+                "User-Agent": get_optimal_user_agent(),
+            },
+            "cachedir": False,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(test_url, download=False)
+            title = info.get("title", "Unknown")
+            
+            return jsonify({
+                "status": "success",
+                "message": f"测试成功，可以正常提取视频信息: {title}",
+                "title": title
+            })
+            
+    except Exception as e:
+        error_msg = str(e)
+        if "403" in error_msg:
+            return jsonify({
+                "status": "403_error",
+                "message": "检测到403错误，建议：1) 更新yt-dlp 2) 清理缓存 3) 重启应用",
+                "error": error_msg
+            })
+        else:
+            return jsonify({
+                "status": "error", 
+                "message": f"测试失败: {error_msg}"
+            })
+
+
+@app.route("/api/health")
+def health_check():
+    """健康检查端点"""
+    return jsonify({
+        "status": "healthy",
+        "message": "服务器运行正常",
+        "timestamp": datetime.now().isoformat(),
+        "server_info": {
+            "host": "0.0.0.0",
+            "port": 5000,
+            "workers": MAX_WORKERS,
+        }
+    })
+
+
+@app.route("/ping")
+def ping():
+    """简单的ping端点"""
+    return "pong"
+
+
+@app.route("/api/connection-test")
+def connection_test():
+    """连接测试端点"""
+    return jsonify({
+        "server_running": True,
+        "api_working": True,
+        "timestamp": datetime.now().isoformat(),
+        "message": "API连接正常"
+    })
+
+
+@app.route("/api/troubleshooting")
+def troubleshooting():
+    """提供403错误的故障排除指南"""
+    return jsonify({
+        "403_solutions": [
+            {
+                "step": 1,
+                "title": "更新yt-dlp",
+                "description": "执行: pip install --upgrade yt-dlp",
+                "api": "/api/update-ytdlp"
+            },
+            {
+                "step": 2, 
+                "title": "清理缓存",
+                "description": "清理yt-dlp缓存文件",
+                "api": "/api/clear-cache"
+            },
+            {
+                "step": 3,
+                "title": "重启应用",
+                "description": "重启下载服务器"
+            },
+            {
+                "step": 4,
+                "title": "使用web_embedded模式",
+                "description": "已在代码中自动启用多客户端策略"
+            },
+            {
+                "step": 5,
+                "title": "检查网络",
+                "description": "尝试更换网络或使用VPN"
+            }
+        ],
+        "connection_test": [
+            {
+                "step": 1,
+                "title": "测试基本连接",
+                "url": "/ping"
+            },
+            {
+                "step": 2,
+                "title": "测试API连接",
+                "url": "/api/health"
+            },
+            {
+                "step": 3,
+                "title": "测试Socket.IO",
+                "description": "检查浏览器控制台"
+            }
+        ],
+        "prevention_tips": [
+            "定期更新yt-dlp到最新版本",
+            "避免频繁请求同一视频",
+            "使用不同的User-Agent",
+            "清理缓存文件",
+            "使用代理或VPN"
+        ]
+    })
+
+
+@app.route("/api/test-ffmpeg")
+def test_ffmpeg():
+    """测试FFmpeg是否可用"""
+    is_available = check_ffmpeg_availability()
+    
+    if is_available:
+        return jsonify({
+            "status": "available",
+            "message": "FFmpeg 可用，支持音频转换"
+        })
+    else:
+        return jsonify({
+            "status": "not_found",
+            "message": "FFmpeg 未安装或不可用，音频转换功能受限"
+        })
+
+
 @app.route("/api/performance-status")
 def api_performance_status():
     """返回优化配置状态"""
@@ -600,16 +891,19 @@ def api_performance_status():
         "system_info": {
             "thread_pool_workers": MAX_WORKERS,
             "has_aria2c": PERFORMANCE_CONFIG["has_aria2c"],
+            "has_ffmpeg": check_ffmpeg_availability(),
             "using_aria2c": False,  # 运行时动态选择
             "concurrent_fragments": PERFORMANCE_CONFIG["concurrent_fragments"],
             "buffersize": PERFORMANCE_CONFIG["buffersize"],
             "http_chunk_size": PERFORMANCE_CONFIG["http_chunk_size"],
             "aria2c_available": PERFORMANCE_CONFIG["has_aria2c"],
+            "supported_audio_formats": ["original", "mp3", "wav"],
         },
         "optimization_features": [
             f"🧵 线程池复用 ({MAX_WORKERS}工作线程)",
             f"🚀 yt-dlp内置优化 ({PERFORMANCE_CONFIG['concurrent_fragments']}线程并发)",
             f"⚡ aria2c外部加速器 ({'可用' if PERFORMANCE_CONFIG['has_aria2c'] else '不可用'})",
+            f"🎵 FFmpeg音频转换 ({'可用' if check_ffmpeg_availability() else '不可用'})",
             f"📊 进度推送节流 ({int(PERFORMANCE_CONFIG['progress_throttle']*1000)}ms)",
             f"💾 大缓冲区 ({PERFORMANCE_CONFIG['buffersize']//1024}KB)",
             f"📦 大块下载 ({PERFORMANCE_CONFIG['http_chunk_size']//1024//1024}MB)",
@@ -618,7 +912,20 @@ def api_performance_status():
             f"📈 智能重试策略 ({PERFORMANCE_CONFIG['retries']}次)",
             "✅ 进度显示正常工作",
             "🔗 断点续传支持",
-            "🔧 动态下载器选择"
+            "🔧 动态下载器选择",
+            "🎵 音频格式：MP3 + WAV",
+            "🛠️ 智能错误处理",
+            "🛡️ 403错误防护 (多客户端策略)",
+            "🧹 自动缓存管理",
+            "🔄 故障自动恢复"
+        ],
+        "anti_403_features": [
+            "多客户端策略 (web_embedded, web, ios, android)",
+            "智能User-Agent轮换",
+            "自动缓存清理",
+            "请求间隔优化",
+            "地理绕过启用",
+            "格式兼容性增强"
         ]
     })
 
@@ -626,12 +933,13 @@ def api_performance_status():
 # ────────────── Socket.IO 事件 ──────────────
 @socketio.on("connect")
 def on_connect():
-    emit("connected", {"status": "connected"})
+    print(f"✅ 客户端连接: {request.sid}")
+    emit("connected", {"status": "connected", "message": "服务器连接成功"})
 
 
 @socketio.on("disconnect")
 def on_disconnect():
-    pass
+    print(f"❌ 客户端断开: {request.sid}")
 
 
 @socketio.on("join_session")
@@ -639,19 +947,40 @@ def on_join(data: dict):
     session_id = data.get("session_id")
     if session_id:
         join_room(session_id)
+        print(f"🔗 客户端 {request.sid} 加入会话: {session_id}")
         current = DownloadStatus.get(session_id)
         if current:
             emit("download_progress", current)
 
 
+@socketio.on("ping")
+def on_ping(data):
+    """处理客户端ping"""
+    print(f"📡 收到ping: {request.sid}")
+    emit("pong", {"message": "服务器响应正常", "timestamp": datetime.now().isoformat()})
+
+
 # ────────────── Entrypoint ──────────────
 if __name__ == "__main__":
     print("🎬 Downloader server running at http://0.0.0.0:5000")
-    print("🚀 高性能优化版本已启用（支持下载器选择）！")
+    print("🚀 高性能优化版本已启用（支持下载器选择 + 403错误防护）！")
+    print()
+    print("🌐 访问地址:")
+    print("   • http://localhost:5000")
+    print("   • http://127.0.0.1:5000") 
+    print("   • http://192.168.237.2:5000")
+    print()
+    print("🔧 调试端点:")
+    print("   • http://localhost:5000/ping - 基本连接测试")
+    print("   • http://localhost:5000/api/health - 健康检查")
+    print("   • http://localhost:5000/api/connection-test - 连接测试")
+    print("   • http://localhost:5000/api/downloads - API测试")
+    print()
     print("✨ 性能特性:")
     print(f"   • 线程池复用: {MAX_WORKERS} 工作线程")
     print(f"   • yt-dlp内置优化: {PERFORMANCE_CONFIG['concurrent_fragments']} 线程并发")
     print(f"   • aria2c外部加速: {'可用' if PERFORMANCE_CONFIG['has_aria2c'] else '不可用'}")
+    print(f"   • FFmpeg音频转换: {'可用' if check_ffmpeg_availability() else '不可用'}")
     print(f"   • 大缓冲区: {PERFORMANCE_CONFIG['buffersize']//1024}KB")
     print(f"   • 大块下载: {PERFORMANCE_CONFIG['http_chunk_size']//1024//1024}MB")
     print(f"   • 进度推送节流: {int(PERFORMANCE_CONFIG['progress_throttle']*1000)}ms")
@@ -660,6 +989,23 @@ if __name__ == "__main__":
     print("   • 原始格式极速下载")
     print("   • ✅ 进度显示正常工作")
     print("   • 🔧 动态下载器选择")
+    print("   • 🎵 音频格式：MP3 + WAV")
+    print("   • 🛠️ 智能错误处理")
+    print()
+    print("🛡️ 403错误防护特性:")
+    print("   • 🔄 多客户端策略 (web_embedded/web/ios/android)")
+    print("   • 🧹 自动缓存管理")
+    print("   • ⏱️ 智能请求间隔")
+    print("   • 🌍 地理绕过启用")
+    print("   • 🔧 故障自动恢复")
+    print("   • 📱 User-Agent智能轮换")
+    print()
+    print("🔧 故障排除API:")
+    print("   • /api/test-download - 测试下载功能")
+    print("   • /api/clear-cache - 清理缓存")
+    print("   • /api/update-ytdlp - 更新yt-dlp")
+    print("   • /api/troubleshooting - 获取故障排除指南")
+    print()
     
     if PERFORMANCE_CONFIG["has_aria2c"]:
         print("   ✅ aria2c加速器可用")
@@ -668,6 +1014,24 @@ if __name__ == "__main__":
         print(f"      - 最小分片: {PERFORMANCE_CONFIG['aria2c_min_split_size']}")
     else:
         print("   ❌ aria2c未安装，仅可使用yt-dlp内置下载器")
+    
+    if check_ffmpeg_availability():
+        print("   ✅ FFmpeg可用，支持音频转换 (MP3/WAV)")
+    else:
+        print("   ❌ FFmpeg未安装，仅支持原始格式音频下载")
+    
+    print()
+    print("💡 遇到HTTP 403错误时的解决方案:")
+    print("   1. 访问 /api/update-ytdlp 更新yt-dlp")
+    print("   2. 访问 /api/clear-cache 清理缓存")
+    print("   3. 重启应用程序")
+    print("   4. 检查网络连接或尝试VPN")
+    print()
+    print("🔗 如果前端显示'无法连接到服务器':")
+    print("   1. 确保防火墙未阻止5000端口")
+    print("   2. 测试 http://localhost:5000/ping")
+    print("   3. 检查浏览器控制台错误信息")
+    print("   4. 确认前端连接地址正确")
     
     socketio.run(
         app,

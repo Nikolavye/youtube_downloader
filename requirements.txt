@@ -7,3 +7,4 @@ gunicorn[eventlet]==21.2.0
 # caria2c进度条
 # 删掉无用测试代码
 # 后端logger
+# pip install --upgrade yt-dlp
